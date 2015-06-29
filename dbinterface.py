@@ -21,8 +21,8 @@ def check_user():
     return
 
 def connect_to_db():
-    cnx = mysql.connector.connect(user ='testuser',
-                              password ='test',
+    cnx = mysql.connector.connect(user ='RESTful',
+                              password ='ShyftWrk',
                               host = 'www.shyftwrk.com',
                               port= 4454)
     return cnx
@@ -43,19 +43,30 @@ def show_names():
     jsonstr = "json List"
     return jsonlist
 
-@application.route('/newAccount', methods=['GET', 'POST'])
-def createUser():
+@application.route('/account/newuser', methods=['POST'])
+def create_user():
+    cursor = g.db.cursor()
+    username = [request.args['username'].encode('utf-8')]
+    query = 'select User, Host from mysql.user where User like %s'
+    cursor.execute(query, username)
+    for row in cursor.fetchall():
+        if username == row[0].decode('utf-8'):
+            return "username is already in database, please choose another username or login!"
+
+@application.route('/account/login', methods=['GET'])
+def login_user():
     cursor = g.db.cursor()
     if request.method == 'GET':
-        query = 'select User, Host from mysql.user where User like \"'+request.args['username']+'\" '
-        newstring = "results: "
-        cursor.execute(query)
+        username = [request.args['username'].encode('utf-8')]
+        password = [request.args['password'].encode('utf-8')]
+        query = 'select username, password from shyftwrk_example.userlist where user like %s'
+        cursor.execute(query, username)
         for row in cursor.fetchall():
-            if request.args['username'].encode('utf-8') == row[0].decode('utf-8'):
-                return "niggers"
-        return "this account name is unique, proceed with creation"
-
-
+            if username == row[0].decode('utf-8') and password == row[1].decode('utf-8'):
+                session.set('logged_in')
+                return "successfully logged in"
+        return "username and/or password incorrect"
+    return "incorrect http method"
 @application.after_request
 def after_request(response):
     g.db.close()
