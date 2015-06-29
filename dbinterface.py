@@ -46,13 +46,15 @@ def show_names():
 @application.route('/newAccount', methods=['GET', 'POST'])
 def createUser():
     cursor = g.db.cursor()
-    if request.method == 'POST':
-        query = 'select User, Host from mysql.user where User like '.join(request.form['username'])
-        if not cursor.execute(query):
-            error = "username doesn't exist"
-        else:
-            return "you did it!" + request.form['username'] + "exists!"
-    return "you fucked up"
+    if request.method == 'GET':
+        query = 'select User, Host from mysql.user where User like \"'+request.args['username']+'\" '
+        newstring = "results: "
+        cursor.execute(query)
+        for row in cursor.fetchall():
+            if request.args['username'].encode('utf-8') == row[0].decode('utf-8'):
+                return "niggers"
+        return "this account name is unique, proceed with creation"
+
 
 @application.after_request
 def after_request(response):
