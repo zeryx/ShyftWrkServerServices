@@ -42,16 +42,16 @@ def after_request(response):
     return response
 
 
-@application.route('/<group>/accounts/newuser', methods=['POST', 'GET'])  # remove the get eventually
+@application.route('/<group>/accounts/newuser', methods=['POST'])  # remove the get eventually
 def create_user(group):
     # create local user variables
     salt = os.urandom(16).encode('hex')
-    username = request.args['username'].encode('utf-8')
+    username = request.form['username'].encode('utf-8')
     md5pass = hashlib.md5()
-    md5pass.update(salt + request.args['password'].encode('utf-8'))
-    firstname = request.args['first'].encode('utf-8')
-    lastname = request.args['last'].encode('utf-8')
-    adminbool = request.args['admin'].encode('utf-8')
+    md5pass.update(salt + request.form['password'].encode('utf-8'))
+    firstname = request.form['first'].encode('utf-8')
+    lastname = request.form['last'].encode('utf-8')
+    adminbool = request.form['admin'].encode('utf-8')
     query = 'select username, password from shyftwrk.userlist where username = %s and organization = %s'
     cursor = g.db.cursor()
     try:
@@ -74,18 +74,18 @@ def create_user(group):
     return json.jsonify({'success' : "user %s was successfully inserted into database" % username})
 
 
-@application.route('/<group>/accounts/login', methods=['GET'])
+@application.route('/<group>/accounts/login', methods=['POST'])
 def login_user(group):
     if group + 'logged in' in session:
         return 'you are already logged in as %s' % escape(session[group + 'username'])
     # create local user variables
     cursor = g.db.cursor()
-    if 'username' in request.args:
-        username = request.args['username'].encode('utf-8')
+    if 'username' in request.form:
+        username = request.form['username'].encode('utf-8')
     else:
         json.jsonify({'error': 'username field is required.'})
-    if 'password' in request.args:
-        password = request.args['password'].encode('utf-8')
+    if 'password' in request.form:
+        password = request.form['password'].encode('utf-8')
     else:
         json.jsonify({'error' : 'password field is required'})
     query = 'select username, password, salt from shyftwrk.userlist  where username = %s and organization = %s'
@@ -135,7 +135,7 @@ def data_pull_request(group): # creates a json output containing all staff with 
                 'positions' : row[1].decode('utf-8'),
                 'portrait' : row[2].decode('utf-8'),
                 'organizations' : row[4].decode('utf-8'),
-                'shift data' : {}
+                'shift data' : {} # fill this dict with shift data
             }
             chartQuery = 'select DATE_FORMAT(date,\'%d-%m-%y\') as date, performance, shift_scheduled, ' \
                          'position_scheduled, shift_id from shyftwrk.shyftdata where staff_id = %s and organization = %s'
@@ -147,22 +147,38 @@ def data_pull_request(group): # creates a json output containing all staff with 
             for shift_row, j in zip(shyftdata, range(0, cursor.rowcount)): # create new dictionaries for each shift item
                 jsonstring[row[3]]['shift data'][j] = {}
                 jsonstring[row[3]]['shift data'][j] = {
-                    'date' : shift_row[0].decode('utf-8'),
+                    'date' : shift_row[0].encode('utf-8'),
                     'performance' : shift_row[1],
                     'shift scheduled' : shift_row[2],
-                    'position scheduled' : shift_row[3].decode('utf-8'),
+                    'position scheduled' : shift_row[3],
                     'shift_id' : shift_row[4],
-                    'synergy' : {}
+                    'synergy' : {} #fill this dict with synergy data
                 }
 
-                synergyQuery = 'select column_name from information_schema.columns where ' \
+                synColQuery = 'select column_name from information_schema.columns where ' \
                                'table_schema = \'shyftwrk\' and table_name = \'shyftdata\''
                 try:
-                    cursor.execute(synergyQuery)
+                    cursor.execute(synColQuery)
                 except mysql.connector.Error as err:
                     return json.jsonify({'error' : 'the following query failed: data/pulljson, error code is' + err.msg})
-                coldata = cursor.fetchall()
+                # col_data = cursor.fetchall()
+                col_data = []
+                syn_col_string = ' '
+                for col_select in cursor.fetchall():
+                    if 'syn_' in col_select[0].encode('utf-8'): #for each column, if it starts with syn_, its a synergy query
+                        syn_col_string +=col_select[0].encode('utf-8') + ','
+                        col_data.append(col_select[0].encode('utf-8'))
+                syn_col_string = syn_col_string[:-1] # remove the trailing coma from the string for the query to work
+                synergyQuery = 'select ' + syn_col_string + ' from shyftwrk.shyftdata where shift_id = %s'
+                try:
+                    cursor.execute(synergyQuery, (shift_row[4],))
+                except mysql.connector.Error as err:
+                    return json.jsonify({'error' : 'the following query failed: data/pulljson, error code is' + err.msg})
 
+                synergy_data = map(list, cursor.fetchall()) #its easier to just create a list of this, since we don't need to match anything
+                for k in  range(0, len(col_data)):
+                    if not row[3] in col_data[k]: #strip the syn_ cols that are of the same type as the parent
+                        jsonstring[row[3]]['shift data'][j]['synergy'][col_data[k]] = synergy_data[0][k]
 
         return Response(json.dumps(jsonstring, indent=4, separators=(',', ':')), mimetype='application/json')
 
@@ -183,7 +199,7 @@ def insert_staff(group):
         if 'portrait' in request.form:
             portrait = request.form['portrait'].encode('utf-8')
         else:
-            portrait = '*'
+            return json.jsonify({'error' : 'portrait field is required'})
         last_edited_by = session['username'].encode('utf-8')
         if 'has UID' in request.args:
             # UID = request.form['UID'].encode('utf-8') this is how it should be done, but for testing I will use args
