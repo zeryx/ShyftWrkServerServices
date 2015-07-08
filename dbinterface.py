@@ -7,7 +7,7 @@ This file will (hopefully) act as a conduit between the sql server, and the REST
 from __future__ import with_statement
 import os, sys, mysql.connector, hashlib
 from mysql.connector import errorcode
-from flask import Flask, request, session, flash, g, redirect, url_for, abort, Response, json, escape
+from flask import Flask, request, session, flash, g, redirect, Response, json, escape
 
 application = Flask(__name__)
 application.debug = True
@@ -42,52 +42,73 @@ def after_request(response):
     return response
 
 
-@application.route('/<group>/accounts/newuser', methods=['POST'])  # remove the get eventually
+@application.route('/<group>/accounts/user=new', methods=['POST'])  # remove the get eventually
+#manipulates the shyftwrk user accounts table
 def create_user(group):
+    if not 'username '+group in session:
+        return json.jsonify({'error' :'please login!'})
     # create local user variables
-    salt = os.urandom(16).encode('hex')
-    username = request.form['username'].encode('utf-8')
-    md5pass = hashlib.md5()
-    md5pass.update(salt + request.form['password'].encode('utf-8'))
-    firstname = request.form['first'].encode('utf-8')
-    lastname = request.form['last'].encode('utf-8')
-    adminbool = request.form['admin'].encode('utf-8')
-    query = 'select username, password from shyftwrk.userlist where username = %s and organization = %s'
-    cursor = g.db.cursor()
-    try:
-        cursor.execute(query, (username, group))
-    except mysql.connector.Error as err:
-        return json.jsonify({'error' : 'the following query failed: data/insert_staff, error code is' + err.msg})
+    else:
 
-    for row in cursor.fetchall():
-        if username == row[0].decode('utf-8'):
-            return "username is already in database, please choose another username or login!"
-    query = 'insert into shyftwrk.userlist(username, password, salt, first_name, last_name, organization db_admin_perm)' \
-                                        ' values (%s, %s, %s, %s,%s, %s, %s)'
+        if not 'username' in request.form:
+            return json.jsonify({'error': 'username field is required.'})
+        if not 'password' in request.form:
+            return json.jsonify({'error' : 'password field is required.'})
+        if not 'first name' in request.form:
+            return json.jsonify({'error': 'first name field is required'})
+        if not 'last name' in request.form:
+            return json.jsonify({'error' : 'last name field is required'})
+        if not 'admin' in request.form:
+            return json.jsonify({'error' : 'admin field is required'})
 
-    try:
-        cursor.execute(query, (username, md5pass.hexdigest(), salt, firstname, lastname, group, adminbool))
-    except mysql.connector.Error as err:
-        return json.jsonify({'error' : 'the following query failed: data/insert_staff, error code is' + err.msg})
-    g.db.commit()
-    print cursor.statement
-    return json.jsonify({'success' : "user %s was successfully inserted into database" % username})
+
+        username = request.form['username'].encode('utf-8')
+        password = request.form['password'].encode('utf-8')
+        firstname = request.form['first name'].encode('utf-8')
+        lastname = request.form['last name'].encode('utf-8')
+        adminbool = request.form['admin'].encode('utf-8')
+        salt = os.urandom(16).encode('hex')
+        md5pass = hashlib.md5()
+        md5pass.update(salt + password)
+        query = 'select username, password from shyftwrk.userlist where username = %s and organization = %s'
+        cursor = g.db.cursor()
+        try:
+            cursor.execute(query, (username, group))
+        except mysql.connector.Error as err:
+            return json.jsonify({'error' : 'the following query failed: data/insert_staff, error code is' + err.msg})
+
+        for row in cursor.fetchall():
+            if username == row[0].decode('utf-8'):
+                return "username is already in database, please choose another username or login!"
+        query = 'insert into shyftwrk.userlist(username, password, salt, first_name, last_name, organization db_admin_perm)' \
+                                            ' values (%s, %s, %s, %s,%s, %s, %s)'
+
+        try:
+            cursor.execute(query, (username, md5pass.hexdigest(), salt, firstname, lastname, group, adminbool))
+        except mysql.connector.Error as err:
+            return json.jsonify({'error' : 'the following query failed: data/insert_staff, error code is' + err.msg})
+        g.db.commit()
+        print cursor.statement
+        return json.jsonify({'success' : "user %s was successfully inserted into database" % username})
 
 
 @application.route('/<group>/accounts/login', methods=['POST'])
+##input: username, password - output: login cookie, admin cookie (if applicable)
 def login_user(group):
-    if group + 'logged in' in session:
-        return 'you are already logged in as %s' % escape(session[group + 'username'])
+    ## check if all form fields contain data, for some reason flask has trouble with not saying what it needs
+    if not 'username' in request.form:
+        return json.jsonify({'error': 'username field is required.'})
+    if not 'password' in request.form:
+        return json.jsonify({'error' : 'password field is required.'})
+
+    username = request.form['username'].encode('utf-8')
+    password = request.form['password'].encode('utf-8')
+
+    if 'username '+group in session and session['username '+group] == request.form['username']:
+        return json.jsonify({'warning' :'you are already logged in as %s' % escape(username)})
+
     # create local user variables
     cursor = g.db.cursor()
-    if 'username' in request.form:
-        username = request.form['username'].encode('utf-8')
-    else:
-        json.jsonify({'error': 'username field is required.'})
-    if 'password' in request.form:
-        password = request.form['password'].encode('utf-8')
-    else:
-        json.jsonify({'error' : 'password field is required'})
     query = 'select username, password, salt from shyftwrk.userlist  where username = %s and organization = %s'
 
     try:
@@ -99,24 +120,24 @@ def login_user(group):
         md5pass = hashlib.md5()
         md5pass.update(row[2].decode('utf-8') + password)
         if username == row[0].decode('utf-8') and md5pass.hexdigest() == row[1].decode('utf-8'):
-            session[group + 'username'] = request.args['username']
-            session[group + 'logged in'] = True
-            return "successfully logged in"
-    return "username and/or password incorrect"
+            successResponse = Response(json.dumps({'success': 'you have successfully logged in'}, indent=4), mimetype='application/json')
+            session['username '+group] = username
+            return successResponse
+    return Response(json.dumps({'error': 'username/password are invalid'}, indent=4), mimetype='application/json')
 
 
 @application.route('/<group>/accounts/logoff')
 def logout(group):
-    if group + 'logged in' in session:
-        session.pop(group + 'username' and group + 'logged in')
+    if 'username '+group in session :
+        session.pop()
         return "logged off"
     else:
         return "you are already logged out!"
 
 
-@application.route('/<group>/data/pulljson', methods=['GET'])
+@application.route('/<group>/data/pull', methods=['GET'])
 def data_pull_request(group): # creates a json output containing all staff with corresponding shift data objects pulled from sql
-    if not group + 'logged in' in session:
+    if not 'username ' + group in session:
         return 'please login!'
     else:
         grouppattern = '%' + group + '%'
@@ -182,9 +203,9 @@ def data_pull_request(group): # creates a json output containing all staff with 
 
         return Response(json.dumps(jsonstring, indent=4, separators=(',', ':')), mimetype='application/json')
 
-@application.route('/<group>/data/newstaff', methods=['POST'])
+@application.route('/<group>/data/staff=new', methods=['POST'])
 def insert_staff(group):
-    if not group + 'logged in' in session:
+    if not 'username '+group in session:
         return 'please login!'
     else:
         cursor = g.db.cursor()
@@ -248,9 +269,9 @@ def insert_staff(group):
             g.db.commit()
             return json.jsonify({'success':'person added', 'uid' : uid})
 
-@application.route('/<group>/data/editstaff', methods=['POST'])
+@application.route('/<group>/data/staff=edit', methods=['POST'])
 def edit_staff(group):
-    if not group + 'logged in' in session:
+    if not 'username '+group in session:
         return 'please login!'
     else:
         cursor = g.db.cursor()
@@ -292,9 +313,9 @@ def edit_staff(group):
 
         return json.jsonify({'success':'table has been updated', 'uid' : uid})
 
-@application.route('/<group>/data/newshift', methods=['POST'])
+@application.route('/<group>/data/shift=new', methods=['POST'])
 def new_shyft(group):
-    if not group + 'logged in' in session:
+    if not 'username '+group in session:
         return json.jsonify({'error': 'please login!'})
     else:
         cursor = g.db.cursor()
@@ -352,9 +373,9 @@ def new_shyft(group):
         lastid = lastid[0]
         return json.jsonify({'success' : 'shift successfully added', 'shift id' : lastid})
 
-@application.route('/<group>/data/editshift', methods=['POST'])
+@application.route('/<group>/data/shift=edit', methods=['POST'])
 def edit_shift(group):
-    if not group + 'logged in' in session:
+    if not 'username '+group in session:
         return json.jsonify({'error': 'please login!'})
     else:
         cursor = g.db.cursor()
